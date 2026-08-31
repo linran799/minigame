@@ -31,6 +31,7 @@ public class GameManager {
         WAITING_SWAP_TIME, WAITING_INVITE, WAITING_INVEE_CONFIRM,
         WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL,
         WAITING_JOIN, HUNTER_FREEZE,
+        WAITING_BROTHERLY_INVITE, WAITING_BROTHERLY_ACCEPT,
         COUNTDOWN, RUNNING, FINISHED
     }
 
@@ -63,6 +64,12 @@ public class GameManager {
     private BlockPos preyLastOverworldPos = null;
     private String preyDimension = "minecraft:overworld";
 
+    // Brotherly love game settings
+    private final Set<UUID> brotherlyPlayers = new HashSet<>();
+    private UUID brotherlyHostUUID = null;
+    private final Set<UUID> brotherlyPendingInvites = new HashSet<>();
+    private final Set<UUID> brotherlyVisitedEnd = new HashSet<>();
+
     private static final String OBJECTIVE_NAME = "minigame_data";
     private final Map<UUID, Integer> playerLives = new HashMap<>();
 
@@ -87,7 +94,9 @@ public class GameManager {
                 || state == GameState.WAITING_INVEE_CONFIRM
                 || state == GameState.WAITING_HUNTER_FREEZE
                 || state == GameState.WAITING_COMPASS_INTERVAL
-                || state == GameState.WAITING_JOIN;
+                || state == GameState.WAITING_JOIN
+                || state == GameState.WAITING_BROTHERLY_INVITE
+                || state == GameState.WAITING_BROTHERLY_ACCEPT;
     }
 
     public String getCurrentGame() {
@@ -116,6 +125,10 @@ public class GameManager {
             broadcast(server, "§6§l=== 猎人游戏 ===");
             broadcast(server, "§e确认开始游戏？输入 §a§ly §e确认，§c§ln §e取消");
             broadcast(server, "§c注意：发起者为猎物，其他加入者为猎人！游戏开始后会清空所有玩家物品栏！");
+        } else if ("brotherlylove".equals(gameName)) {
+            broadcast(server, "§6§l=== 情同手足 ===");
+            broadcast(server, "§e确认开始游戏？输入 §a§ly §e确认，§c§ln §e取消");
+            broadcast(server, "§c注意：所有玩家共享物品栏、生命值、饥饿值！");
         }
     }
 
@@ -133,6 +146,8 @@ public class GameManager {
             case WAITING_INVEE_CONFIRM -> handleInviteeConfirm(server, player, msg);
             case WAITING_HUNTER_FREEZE -> handleHunterFreezeInput(server, player, msg);
             case WAITING_COMPASS_INTERVAL -> handleCompassIntervalInput(server, player, msg);
+            case WAITING_BROTHERLY_INVITE -> handleBrotherlyInvite(server, player, rawMsg);
+            case WAITING_BROTHERLY_ACCEPT -> handleBrotherlyAccept(server, player, msg);
             case WAITING_JOIN -> handleHunterJoin(server, player, msg);
             default -> {}
         }
@@ -153,6 +168,11 @@ public class GameManager {
                 hunterGamePlayers.add(player.getUUID());
                 state = GameState.WAITING_HUNTER_FREEZE;
                 broadcast(server, "§a确认开始！ §e请输入猎人冻结时间（秒，默认30）：");
+            } else if ("brotherlylove".equals(currentGame)) {
+                brotherlyHostUUID = player.getUUID();
+                brotherlyPlayers.add(player.getUUID());
+                state = GameState.WAITING_BROTHERLY_INVITE;
+                broadcast(server, "§a确认开始！ §e请输入要邀请的玩家名字（输入 done 结束邀请）：");
             }
         } else if (msg.equals("n")) {
             cancelStart(server);
@@ -278,6 +298,154 @@ public class GameManager {
             }
         }
     }
+
+    private void handleBrotherlyInvite(MinecraftServer server, ServerPlayer player, String rawMsg) {
+        // Only host can invite
+        if (!player.getUUID().equals(brotherlyHostUUID)) return;
+
+        if (rawMsg.equalsIgnoreCase("done")) {
+            if (brotherlyPendingInvites.isEmpty()) {
+                broadcast(server, "§c至少需要邀请一名玩家！");
+                return;
+            }
+            state = GameState.WAITING_BROTHERLY_ACCEPT;
+            broadcast(server, "§a邀请完成！等待所有玩家接受邀请...");
+            for (UUID uuid : brotherlyPendingInvites) {
+                ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+                if (p != null) {
+                    p.sendSystemMessage(Component.literal("§6§l=== 情同手足 ==="));
+                    p.sendSystemMessage(Component.literal("§e你被邀请参加情同手足游戏！"));
+                    p.sendSystemMessage(Component.literal("§e所有玩家共享物品栏、生命值、饥饿值！"));
+                    p.sendSystemMessage(Component.literal("§e杀死末影龙并回到主世界则共同胜利！"));
+                    p.sendSystemMessage(Component.literal("§e输入 §a§ly §e接受，§c§ln §e拒绝"));
+                }
+            }
+            return;
+        }
+
+        ServerPlayer target = server.getPlayerList().getPlayerByName(rawMsg);
+        if (target == null) {
+            broadcast(server, "§c找不到玩家：" + rawMsg + "，请重新输入");
+            return;
+        }
+        if (target.getUUID().equals(player.getUUID())) {
+            broadcast(server, "§c不能邀请自己！");
+            return;
+        }
+        if (brotherlyPendingInvites.contains(target.getUUID())) {
+            broadcast(server, "§c该玩家已被邀请！");
+            return;
+        }
+
+        brotherlyPendingInvites.add(target.getUUID());
+        broadcast(server, "§a已邀请 " + target.getName().getString() + "！（当前邀请" + brotherlyPendingInvites.size() + "人，输入 done 结束邀请）");
+    }
+
+    private void handleBrotherlyAccept(MinecraftServer server, ServerPlayer player, String msg) {
+        if (!brotherlyPendingInvites.contains(player.getUUID())) return;
+
+        if (msg.equals("y")) {
+            brotherlyPlayers.add(player.getUUID());
+            brotherlyPendingInvites.remove(player.getUUID());
+            broadcast(server, "§a" + player.getName().getString() + " 接受了邀请！");
+
+            if (brotherlyPendingInvites.isEmpty()) {
+                startBrotherlyGame(server);
+            }
+        } else if (msg.equals("n")) {
+            brotherlyPendingInvites.remove(player.getUUID());
+            broadcast(server, "§c" + player.getName().getString() + " 拒绝了邀请，游戏取消");
+            cancelStart(server);
+        }
+    }
+
+    private void startBrotherlyGame(MinecraftServer server) {
+        ServerLevel overworld = server.overworld();
+        BlockPos spawnPos = overworld.getSharedSpawnPos();
+        BlockPos gamePos = findHunterGameLocation(overworld, spawnPos);
+
+        for (UUID uuid : brotherlyPlayers) {
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p != null) {
+                clearInventory(p);
+                p.teleportTo(overworld,
+                        gamePos.getX() + 0.5 + (Math.random() - 0.5) * 5,
+                        gamePos.getY() + 1.0,
+                        gamePos.getZ() + 0.5 + (Math.random() - 0.5) * 5,
+                        p.getYRot(), p.getXRot());
+            }
+        }
+
+        state = GameState.RUNNING;
+        tickCounter = 0;
+        broadcast(server, "§6§l[情同手足] §e游戏开始！所有玩家共享物品栏、生命值、饥饿值，杀龙回家共同胜利！");
+    }
+
+    private void syncBrotherlyState(MinecraftServer server) {
+        ServerPlayer host = server.getPlayerList().getPlayer(brotherlyHostUUID);
+        if (host == null) return;
+
+        for (UUID uuid : brotherlyPlayers) {
+            if (uuid.equals(brotherlyHostUUID)) continue;
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p == null) continue;
+
+            // Sync health and hunger
+            p.setHealth(host.getHealth());
+            p.getFoodData().setFoodLevel(host.getFoodData().getFoodLevel());
+            p.getFoodData().setSaturation(host.getFoodData().getSaturationLevel());
+
+            // Sync inventory
+            for (int i = 0; i < host.getInventory().getContainerSize(); i++) {
+                ItemStack hostStack = host.getInventory().getItem(i);
+                ItemStack copy = hostStack.copy();
+                p.getInventory().setItem(i, copy);
+            }
+
+            // Sync armor
+            for (int i = 0; i < host.getInventory().armor.size(); i++) {
+                ItemStack hostStack = host.getInventory().armor.get(i);
+                ItemStack copy = hostStack.copy();
+                p.getInventory().armor.set(i, copy);
+            }
+
+            // Sync offhand
+            for (int i = 0; i < host.getInventory().offhand.size(); i++) {
+                ItemStack hostStack = host.getInventory().offhand.get(i);
+                ItemStack copy = hostStack.copy();
+                p.getInventory().offhand.set(i, copy);
+            }
+        }
+    }
+
+    private void checkBrotherlyWin(MinecraftServer server) {
+        // Track if any player has been to the_end and returned to overworld
+        for (UUID uuid : brotherlyPlayers) {
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p == null) continue;
+
+            String dim = p.serverLevel().dimension().location().toString();
+            if ("minecraft:overworld".equals(dim) && brotherlyVisitedEnd.contains(uuid)) {
+                brotherlyGameWin(server);
+                return;
+            } else if ("minecraft:the_end".equals(dim)) {
+                brotherlyVisitedEnd.add(uuid);
+            }
+        }
+    }
+
+    private void brotherlyGameWin(MinecraftServer server) {
+        state = GameState.FINISHED;
+        winner = brotherlyHostUUID; // Representative winner
+        broadcast(server, "§6§l[情同手足] §a§l所有玩家共同获胜！成功杀死末影龙并回到主世界！");
+
+        // Celebrate with all players
+        ServerPlayer host = server.getPlayerList().getPlayer(brotherlyHostUUID);
+        if (host != null) {
+            startWinnerCelebration(server, host);
+        }
+    }
+
 
     private void handleInviteeConfirm(MinecraftServer server, ServerPlayer player, String msg) {
         // Only the invitee can confirm
@@ -449,6 +617,10 @@ public class GameManager {
         compassUpdateSeconds = 10;
         preyLastOverworldPos = null;
         preyDimension = "minecraft:overworld";
+        brotherlyPlayers.clear();
+        brotherlyHostUUID = null;
+        brotherlyPendingInvites.clear();
+        brotherlyVisitedEnd.clear();
         winnerPlatformPos = null;
         playerLives.clear();
     }
@@ -620,6 +792,7 @@ public class GameManager {
             case "deathrace" -> "§e你是第一个死完的人！";
             case "brotherhood" -> "§e你成功杀死了对手！";
             case "huntergame" -> "§e恭喜获得游戏胜利！";
+            case "brotherlylove" -> "§e所有玩家共同获胜！";
             default -> "§e恭喜获胜！";
         };
         executeTitleCommand(server, winnerPlayer.getName().getString(), "§6§l恭喜获胜！", subtitle);
@@ -845,6 +1018,11 @@ public class GameManager {
             }
             // Check prey win condition (killed dragon and returned to overworld)
             checkPreyWinCondition(server);
+        } else if ("brotherlylove".equals(currentGame)) {
+            // Sync shared state every tick
+            syncBrotherlyState(server);
+            // Check win condition
+            checkBrotherlyWin(server);
         }
     }
 
@@ -1134,6 +1312,6 @@ public class GameManager {
     }
 
     public List<String> getAvailableGames() {
-        return List.of("deathrace", "brotherhood", "huntergame");
+        return List.of("deathrace", "brotherhood", "huntergame", "brotherlylove");
     }
 }
