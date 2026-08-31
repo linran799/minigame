@@ -43,6 +43,7 @@ public class MinigameCommand {
                 case "brotherhood" -> "剥蒜的情谊";
                 case "huntergame" -> "猎人游戏";
                 case "brotherlylove" -> "情同手足";
+                case "colorparty" -> "色盲派对";
                 default -> game;
             };
             ctx.getSource().sendSuccess(() -> Component.literal("§e- " + displayName + " (" + game + ")"), false);

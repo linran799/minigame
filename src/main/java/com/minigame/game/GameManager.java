@@ -32,6 +32,7 @@ public class GameManager {
         WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL,
         WAITING_JOIN, HUNTER_FREEZE,
         WAITING_BROTHERLY_INVITE, WAITING_BROTHERLY_ACCEPT,
+        WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL, WAITING_COLOR_JOIN,
         COUNTDOWN, RUNNING, FINISHED
     }
 
@@ -70,6 +71,16 @@ public class GameManager {
     private final Set<UUID> brotherlyPendingInvites = new HashSet<>();
     private final Set<UUID> brotherlyVisitedEnd = new HashSet<>();
 
+    // Color party game settings
+    private final Set<UUID> colorPartyPlayers = new HashSet<>();
+    private int colorReactionSeconds = 5;
+    private int colorIntervalSeconds = 10;
+    private String currentTargetColor = null;
+    private int colorTimer = 0;
+    private boolean reactionPhase = false;
+    private final Map<UUID, Integer> colorPartyLives = new HashMap<>();
+    private int colorPartyMaxLives = 3;
+
     private static final String OBJECTIVE_NAME = "minigame_data";
     private final Map<UUID, Integer> playerLives = new HashMap<>();
 
@@ -96,7 +107,10 @@ public class GameManager {
                 || state == GameState.WAITING_COMPASS_INTERVAL
                 || state == GameState.WAITING_JOIN
                 || state == GameState.WAITING_BROTHERLY_INVITE
-                || state == GameState.WAITING_BROTHERLY_ACCEPT;
+                || state == GameState.WAITING_BROTHERLY_ACCEPT
+                || state == GameState.WAITING_COLOR_REACTION
+                || state == GameState.WAITING_COLOR_INTERVAL
+                || state == GameState.WAITING_COLOR_JOIN;
     }
 
     public String getCurrentGame() {
@@ -129,6 +143,10 @@ public class GameManager {
             broadcast(server, "§6§l=== 情同手足 ===");
             broadcast(server, "§e确认开始游戏？输入 §a§ly §e确认，§c§ln §e取消");
             broadcast(server, "§c注意：所有玩家共享物品栏、生命值、饥饿值！");
+        } else if ("colorparty".equals(gameName)) {
+            broadcast(server, "§6§l=== 色盲派对 ===");
+            broadcast(server, "§e确认开始游戏？输入 §a§ly §e确认，§c§ln §e取消");
+            broadcast(server, "§c注意：系统会随机生成颜色，站到对应颜色方块上！没站对会死亡！");
         }
     }
 
@@ -143,6 +161,7 @@ public class GameManager {
             case WAITING_SWAP_TIME, WAITING_INVITE -> initiatorUUID = inviterUUID;
             case WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL -> initiatorUUID = preyUUID;
             case WAITING_BROTHERLY_INVITE -> initiatorUUID = brotherlyHostUUID;
+            case WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL -> initiatorUUID = colorPartyPlayers.isEmpty() ? null : colorPartyPlayers.iterator().next();
             default -> {}
         }
         if (initiatorUUID != null && !player.getUUID().equals(initiatorUUID)) {
@@ -161,6 +180,9 @@ public class GameManager {
             case WAITING_COMPASS_INTERVAL -> handleCompassIntervalInput(server, player, msg);
             case WAITING_BROTHERLY_INVITE -> handleBrotherlyInvite(server, player, rawMsg);
             case WAITING_BROTHERLY_ACCEPT -> handleBrotherlyAccept(server, player, msg);
+            case WAITING_COLOR_REACTION -> handleColorReactionInput(server, player, msg);
+            case WAITING_COLOR_INTERVAL -> handleColorIntervalInput(server, player, msg);
+            case WAITING_COLOR_JOIN -> handleColorJoin(server, player, msg);
             case WAITING_JOIN -> handleHunterJoin(server, player, msg);
             default -> {}
         }
@@ -186,6 +208,12 @@ public class GameManager {
                 brotherlyPlayers.add(player.getUUID());
                 state = GameState.WAITING_BROTHERLY_INVITE;
                 broadcast(server, "§a确认开始！ §e请输入要邀请的玩家名字（输入 done 结束邀请）：");
+            } else if ("colorparty".equals(currentGame)) {
+                colorPartyPlayers.clear();
+                colorPartyPlayers.add(player.getUUID());
+                colorPartyLives.clear();
+                state = GameState.WAITING_COLOR_REACTION;
+                broadcast(server, "§a确认开始！ §e请输入玩家反应时间（秒，默认5）：");
             }
         } else if (msg.equals("n")) {
             cancelStart(server);
@@ -364,6 +392,8 @@ public class GameManager {
 
             if (brotherlyPendingInvites.isEmpty()) {
                 startBrotherlyGame(server);
+        } else if ("colorparty".equals(currentGame)) {
+            startColorPartyGame(server);
             }
         } else if (msg.equals("n")) {
             brotherlyPendingInvites.remove(player.getUUID());
@@ -649,6 +679,13 @@ public class GameManager {
         brotherlyHostUUID = null;
         brotherlyPendingInvites.clear();
         brotherlyVisitedEnd.clear();
+        colorPartyPlayers.clear();
+        colorPartyLives.clear();
+        colorReactionSeconds = 5;
+        colorIntervalSeconds = 10;
+        currentTargetColor = null;
+        colorTimer = 0;
+        reactionPhase = false;
         winnerPlatformPos = null;
         playerLives.clear();
     }
@@ -821,6 +858,7 @@ public class GameManager {
             case "brotherhood" -> "§e你成功杀死了对手！";
             case "huntergame" -> "§e恭喜获得游戏胜利！";
             case "brotherlylove" -> "§e所有玩家共同获胜！";
+            case "colorparty" -> "§e色盲诅咒已解除！";
             default -> "§e恭喜获胜！";
         };
         executeTitleCommand(server, winnerPlayer.getName().getString(), "§6§l恭喜获胜！", subtitle);
@@ -998,6 +1036,7 @@ public class GameManager {
             case FINISHED -> tickCelebration(server);
             case WAITING_JOIN -> tickHunterJoin(server);
             case HUNTER_FREEZE -> tickHunterFreeze(server);
+            case WAITING_COLOR_JOIN -> tickColorJoin(server);
             default -> {}
         }
     }
@@ -1012,6 +1051,224 @@ public class GameManager {
         if (countdownTimer <= 0) {
             executeTitleAll(server, "开始！");
             actuallyStartGame(server);
+        }
+    }
+
+
+    // === Color Party Game ===
+
+    // Block color mapping using Minecraft MapColor (performance optimal)
+    private static final Map<Integer, String> COLOR_NAMES = new HashMap<>();
+    static {
+        COLOR_NAMES.put(1, "草绿色");
+        COLOR_NAMES.put(2, "深绿色");
+        COLOR_NAMES.put(3, "浅绿色");
+        COLOR_NAMES.put(4, "橙色");
+        COLOR_NAMES.put(5, "红橙色");
+        COLOR_NAMES.put(6, "金黄色");
+        COLOR_NAMES.put(7, "金属灰");
+        COLOR_NAMES.put(8, "冰蓝色");
+        COLOR_NAMES.put(9, "水蓝色");
+        COLOR_NAMES.put(10, "树叶绿");
+        COLOR_NAMES.put(11, "深紫色");
+        COLOR_NAMES.put(12, "紫红色");
+        COLOR_NAMES.put(13, "暗红色");
+        COLOR_NAMES.put(14, "亮红色");
+        COLOR_NAMES.put(15, "奶油色");
+        COLOR_NAMES.put(16, "浅灰色");
+        COLOR_NAMES.put(17, "灰色");
+        COLOR_NAMES.put(18, "深灰色");
+        COLOR_NAMES.put(19, "蓝色");
+        COLOR_NAMES.put(20, "深蓝色");
+        COLOR_NAMES.put(21, "宝蓝色");
+        COLOR_NAMES.put(22, "深绿色");
+        COLOR_NAMES.put(23, "亮绿色");
+        COLOR_NAMES.put(24, "白色");
+        COLOR_NAMES.put(25, "浅黄色");
+        COLOR_NAMES.put(26, "棕色");
+        COLOR_NAMES.put(27, "深棕色");
+        COLOR_NAMES.put(28, "铜色");
+        COLOR_NAMES.put(29, "深铜色");
+        COLOR_NAMES.put(30, "粉紫色");
+        COLOR_NAMES.put(31, "深紫色");
+        COLOR_NAMES.put(32, "紫色");
+        COLOR_NAMES.put(33, "深蓝色");
+        COLOR_NAMES.put(34, "青色");
+        COLOR_NAMES.put(35, "深青色");
+        COLOR_NAMES.put(36, "浅绿色");
+        COLOR_NAMES.put(37, "黄绿色");
+        COLOR_NAMES.put(38, "金黄色");
+        COLOR_NAMES.put(39, "橙色");
+        COLOR_NAMES.put(40, "深橙色");
+        COLOR_NAMES.put(41, "红色");
+        COLOR_NAMES.put(42, "深红色");
+        COLOR_NAMES.put(43, "黑色");
+    }
+
+    private String getBlockColorName(BlockState state, ServerLevel level, BlockPos pos) {
+        try {
+            var mapColor = state.getMapColor(level, pos);
+            int id = mapColor.id;
+            return COLOR_NAMES.getOrDefault(id, "未知颜色(" + id + ")");
+        } catch (Exception e) {
+            return "未知颜色";
+        }
+    }
+
+    private String getPlayerBlockColor(ServerPlayer player) {
+        BlockPos pos = player.blockPosition().below();
+        BlockState state = player.serverLevel().getBlockState(pos);
+        return getBlockColorName(state, player.serverLevel(), pos);
+    }
+
+    private String getRandomColor() {
+        Set<String> uniqueColors = new LinkedHashSet<>(COLOR_NAMES.values());
+        List<String> colorList = new ArrayList<>(uniqueColors);
+        return colorList.get(new Random().nextInt(colorList.size()));
+    }
+
+    private void handleColorReactionInput(MinecraftServer server, ServerPlayer player, String msg) {
+        try {
+            int seconds = Integer.parseInt(msg);
+            if (seconds < 1) {
+                broadcast(server, "§c反应时间必须大于0，请重新输入");
+                return;
+            }
+            colorReactionSeconds = seconds;
+            state = GameState.WAITING_COLOR_INTERVAL;
+            broadcast(server, "§a反应时间设置为：" + seconds + "秒 §e请输入颜色间隔时间（秒，默认10）：");
+        } catch (NumberFormatException e) {
+            broadcast(server, "§c请输入有效的数字");
+        }
+    }
+
+    private void handleColorIntervalInput(MinecraftServer server, ServerPlayer player, String msg) {
+        try {
+            int seconds = Integer.parseInt(msg);
+            if (seconds < 1) {
+                broadcast(server, "§c间隔时间必须大于0，请重新输入");
+                return;
+            }
+            colorIntervalSeconds = seconds;
+            state = GameState.WAITING_COLOR_JOIN;
+            joinTimer = 60 * 20;
+            broadcast(server, "§a颜色间隔设置为：每" + seconds + "秒生成一次颜色");
+            broadcast(server, "§e所有玩家在60秒内输入 §a§ly §e加入游戏！");
+        } catch (NumberFormatException e) {
+            broadcast(server, "§c请输入有效的数字");
+        }
+    }
+
+    private void handleColorJoin(MinecraftServer server, ServerPlayer player, String msg) {
+        if (msg.equals("y")) {
+            if (!colorPartyPlayers.contains(player.getUUID())) {
+                colorPartyPlayers.add(player.getUUID());
+                colorPartyLives.put(player.getUUID(), colorPartyMaxLives);
+                broadcast(server, "§a" + player.getName().getString() + " 加入了色盲派对！当前" + colorPartyPlayers.size() + "人");
+            }
+        }
+    }
+
+    private void startColorPartyGame(MinecraftServer server) {
+        BlockPos spawnPos = server.overworld().getSharedSpawnPos();
+        Random rand = new Random();
+        int x = spawnPos.getX() + rand.nextInt(1000) - 500;
+        int z = spawnPos.getZ() + rand.nextInt(1000) - 500;
+        int y = server.overworld().getHeight(net.minecraft.world.level.levelgen.Heightmap.Types.WORLD_SURFACE, x, z) + 1;
+
+        for (UUID uuid : colorPartyPlayers) {
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p != null) {
+                p.teleportTo(server.overworld(), x, y, z, Collections.emptySet(), p.getYRot(), p.getXRot());
+                p.setHealth(p.getMaxHealth());
+                p.getFoodData().setFoodLevel(20);
+                colorPartyLives.put(uuid, colorPartyMaxLives);
+            }
+        }
+
+        colorTimer = colorIntervalSeconds * 20;
+        reactionPhase = false;
+        currentTargetColor = null;
+        broadcast(server, "§6§l[色盲派对] 游戏开始！站到对应颜色的方块上！");
+    }
+
+    private void tickColorParty(MinecraftServer server) {
+        colorTimer--;
+
+        if (!reactionPhase) {
+            if (colorTimer <= 0) {
+                currentTargetColor = getRandomColor();
+                reactionPhase = true;
+                colorTimer = colorReactionSeconds * 20;
+                broadcast(server, "§6§l[色盲派对] 目标颜色：§e§l" + currentTargetColor + " §6§l！快站上去！");
+                executeTitleAll(server, "颜色：" + currentTargetColor);
+            }
+        } else {
+            int secondsLeft = (colorTimer / 20) + 1;
+            if (colorTimer % 20 == 0 && secondsLeft > 0 && secondsLeft <= 3) {
+                broadcast(server, "§e[色盲派对] 还剩 " + secondsLeft + " 秒！");
+            }
+
+            for (UUID uuid : colorPartyPlayers) {
+                ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+                if (p != null && colorPartyLives.getOrDefault(uuid, 0) > 0) {
+                    String blockColor = getPlayerBlockColor(p);
+                    p.displayClientMessage(Component.literal("§e脚下方块：§f" + blockColor + " §7| §6目标：§e" + currentTargetColor), true);
+                }
+            }
+
+            if (colorTimer <= 0) {
+                for (UUID uuid : colorPartyPlayers) {
+                    ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+                    if (p == null) continue;
+                    int lives = colorPartyLives.getOrDefault(uuid, 0);
+                    if (lives <= 0) continue;
+
+                    String blockColor = getPlayerBlockColor(p);
+                    if (!blockColor.equals(currentTargetColor)) {
+                        lives--;
+                        colorPartyLives.put(uuid, lives);
+                        if (lives <= 0) {
+                            broadcast(server, "§c[色盲派对] " + p.getName().getString() + " 命数耗尽，被淘汰！");
+                        } else {
+                            broadcast(server, "§c[色盲派对] " + p.getName().getString() + " 站错颜色！剩余" + lives + "条命");
+                        }
+                        p.setHealth(0);
+                    } else {
+                        p.sendSystemMessage(Component.literal("§a[色盲派对] 站对颜色了！"));
+                    }
+                }
+
+                checkColorPartyWin(server);
+
+                reactionPhase = false;
+                currentTargetColor = null;
+                colorTimer = colorIntervalSeconds * 20;
+            }
+        }
+    }
+
+    private void checkColorPartyWin(MinecraftServer server) {
+        for (UUID uuid : colorPartyPlayers) {
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p == null) continue;
+            String dim = p.serverLevel().dimension().location().toString();
+            if ("minecraft:overworld".equals(dim) && hasKilledDragon(p)) {
+                colorPartyWin(server);
+                return;
+            }
+        }
+    }
+
+    private void colorPartyWin(MinecraftServer server) {
+        state = GameState.FINISHED;
+        broadcast(server, "§6§l[色盲派对] §a§l所有玩家共同获胜！成功解除色盲诅咒！");
+        for (UUID uuid : colorPartyPlayers) {
+            ServerPlayer p = server.getPlayerList().getPlayer(uuid);
+            if (p != null) {
+                startWinnerCelebration(server, p);
+                break;
+            }
         }
     }
 
@@ -1051,6 +1308,8 @@ public class GameManager {
             syncBrotherlyState(server);
             // Check win condition
             checkBrotherlyWin(server);
+        } else if ("colorparty".equals(currentGame)) {
+            tickColorParty(server);
         }
     }
 
@@ -1097,6 +1356,25 @@ public class GameManager {
 
         if (joinTimer <= 0) {
             startHunterGame(server);
+        }
+    }
+
+
+    private void tickColorJoin(MinecraftServer server) {
+        joinTimer--;
+        int secondsLeft = (joinTimer / 20) + 1;
+
+        if (joinTimer % 20 == 0 && secondsLeft > 0 && (secondsLeft <= 10 || secondsLeft % 10 == 0)) {
+            broadcast(server, "§e色盲派对还有 " + secondsLeft + " 秒开始，输入 §a§ly §e加入！");
+        }
+
+        if (joinTimer <= 0) {
+            if (colorPartyPlayers.size() < 1) {
+                broadcast(server, "§c没有玩家加入，游戏取消");
+                reset();
+            } else {
+                startCountdown(server);
+            }
         }
     }
 
@@ -1358,6 +1636,8 @@ public class GameManager {
         brotherlyPlayers.remove(uuid);
         brotherlyPendingInvites.remove(uuid);
         brotherlyVisitedEnd.remove(uuid);
+        colorPartyPlayers.remove(uuid);
+        colorPartyLives.remove(uuid);
 
         // Handle brotherhood game: if either player disconnects, cancel game
         if ("brotherhood".equals(currentGame) && state == GameState.RUNNING) {
@@ -1424,6 +1704,6 @@ public class GameManager {
     }
 
     public List<String> getAvailableGames() {
-        return List.of("deathrace", "brotherhood", "huntergame", "brotherlylove");
+        return List.of("deathrace", "brotherhood", "huntergame", "brotherlylove", "colorparty");
     }
 }
