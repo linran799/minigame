@@ -382,38 +382,53 @@ public class GameManager {
     }
 
     private void syncBrotherlyState(MinecraftServer server) {
-        ServerPlayer host = server.getPlayerList().getPlayer(brotherlyHostUUID);
-        if (host == null) return;
-
+        // True shared inventory: any player modification takes effect
+        List<ServerPlayer> activePlayers = new ArrayList<>();
         for (UUID uuid : brotherlyPlayers) {
-            if (uuid.equals(brotherlyHostUUID)) continue;
             ServerPlayer p = server.getPlayerList().getPlayer(uuid);
-            if (p == null) continue;
+            if (p != null) activePlayers.add(p);
+        }
+        if (activePlayers.size() < 2) return;
 
-            // Sync health and hunger
-            p.setHealth(host.getHealth());
-            p.getFoodData().setFoodLevel(host.getFoodData().getFoodLevel());
-            p.getFoodData().setSaturation(host.getFoodData().getSaturationLevel());
-
-            // Sync inventory
-            for (int i = 0; i < host.getInventory().getContainerSize(); i++) {
-                ItemStack hostStack = host.getInventory().getItem(i);
-                ItemStack copy = hostStack.copy();
-                p.getInventory().setItem(i, copy);
+        // Find the player whose inventory differs from others (the one who modified it)
+        ServerPlayer sourcePlayer = activePlayers.get(0);
+        for (int i = 1; i < activePlayers.size(); i++) {
+            ServerPlayer p = activePlayers.get(i);
+            boolean differs = false;
+            for (int slot = 0; slot < p.getInventory().getContainerSize(); slot++) {
+                if (!ItemStack.matches(p.getInventory().getItem(slot), sourcePlayer.getInventory().getItem(slot))) {
+                    differs = true;
+                    break;
+                }
             }
+            if (differs) {
+                sourcePlayer = p;
+                break;
+            }
+        }
 
+        // Get shared values from source player
+        float sharedHealth = sourcePlayer.getHealth();
+        int sharedFood = sourcePlayer.getFoodData().getFoodLevel();
+        float sharedSaturation = sourcePlayer.getFoodData().getSaturationLevel();
+
+        // Sync to all players
+        for (ServerPlayer p : activePlayers) {
+            p.setHealth(sharedHealth);
+            p.getFoodData().setFoodLevel(sharedFood);
+            p.getFoodData().setSaturation(sharedSaturation);
+
+            // Sync main inventory
+            for (int i = 0; i < sourcePlayer.getInventory().getContainerSize(); i++) {
+                p.getInventory().setItem(i, sourcePlayer.getInventory().getItem(i).copy());
+            }
             // Sync armor
-            for (int i = 0; i < host.getInventory().armor.size(); i++) {
-                ItemStack hostStack = host.getInventory().armor.get(i);
-                ItemStack copy = hostStack.copy();
-                p.getInventory().armor.set(i, copy);
+            for (int i = 0; i < sourcePlayer.getInventory().armor.size(); i++) {
+                p.getInventory().armor.set(i, sourcePlayer.getInventory().armor.get(i).copy());
             }
-
             // Sync offhand
-            for (int i = 0; i < host.getInventory().offhand.size(); i++) {
-                ItemStack hostStack = host.getInventory().offhand.get(i);
-                ItemStack copy = hostStack.copy();
-                p.getInventory().offhand.set(i, copy);
+            for (int i = 0; i < sourcePlayer.getInventory().offhand.size(); i++) {
+                p.getInventory().offhand.set(i, sourcePlayer.getInventory().offhand.get(i).copy());
             }
         }
     }
