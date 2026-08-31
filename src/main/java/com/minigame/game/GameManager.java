@@ -137,6 +137,19 @@ public class GameManager {
         String rawMsg = message.trim();
         MinecraftServer server = player.server;
 
+        // Identity check: only the initiator can input during setup phases
+        UUID initiatorUUID = null;
+        switch (state) {
+            case WAITING_SWAP_TIME, WAITING_INVITE -> initiatorUUID = inviterUUID;
+            case WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL -> initiatorUUID = preyUUID;
+            case WAITING_BROTHERLY_INVITE -> initiatorUUID = brotherlyHostUUID;
+            default -> {}
+        }
+        if (initiatorUUID != null && !player.getUUID().equals(initiatorUUID)) {
+            return;
+        }
+
+
         switch (state) {
             case WAITING_CONFIRM -> handleConfirm(server, player, msg);
             case WAITING_LIVES -> handleLivesInput(server, player, msg);
