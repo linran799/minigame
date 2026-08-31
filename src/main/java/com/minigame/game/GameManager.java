@@ -1343,6 +1343,77 @@ public class GameManager {
         if (objective != null) scoreboard.removeObjective(objective);
     }
 
+
+    // === Player Connect/Disconnect ===
+
+    public void onPlayerDisconnect(ServerPlayer player) {
+        UUID uuid = player.getUUID();
+        MinecraftServer server = player.server;
+
+        // Remove from hunter game sets
+        hunterGamePlayers.remove(uuid);
+        hunterUUIDs.remove(uuid);
+
+        // Remove from brotherly love game
+        brotherlyPlayers.remove(uuid);
+        brotherlyPendingInvites.remove(uuid);
+        brotherlyVisitedEnd.remove(uuid);
+
+        // Handle brotherhood game: if either player disconnects, cancel game
+        if ("brotherhood".equals(currentGame) && state == GameState.RUNNING) {
+            if (uuid.equals(inviterUUID) || uuid.equals(inviteeUUID)) {
+                broadcast(server, "§c[剥蒜的情谊] 玩家 " + player.getName().getString() + " 离线，游戏取消");
+                reset();
+            }
+        }
+
+        // Handle hunter game: if prey disconnects, hunters win
+        if ("huntergame".equals(currentGame) && state == GameState.RUNNING) {
+            if (uuid.equals(preyUUID)) {
+                broadcast(server, "§c[猎人游戏] 猎物离线，猎人获胜！");
+                state = GameState.FINISHED;
+                winner = null; // Team win
+                // Celebrate with first hunter
+                for (UUID hunterId : hunterUUIDs) {
+                    ServerPlayer hunter = server.getPlayerList().getPlayer(hunterId);
+                    if (hunter != null) {
+                        startWinnerCelebration(server, hunter);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    public void onPlayerJoin(ServerPlayer player) {
+        UUID uuid = player.getUUID();
+        MinecraftServer server = player.server;
+
+        // Re-show scoreboard for death race
+        if ("deathrace".equals(currentGame) && state == GameState.RUNNING) {
+            var scoreboard = server.getScoreboard();
+            var objective = scoreboard.getObjective(OBJECTIVE_NAME);
+            if (objective != null) {
+                scoreboard.setDisplayObjective(1, objective);
+                // Restore player score
+                if (playerLives.containsKey(uuid)) {
+                    scoreboard.getOrCreatePlayerScore(player.getScoreboardName(), objective).setScore(playerLives.get(uuid));
+                }
+            }
+            // Restore health
+            if (playerLives.containsKey(uuid) && playerLives.get(uuid) > 0) {
+                player.setHealth(player.getMaxHealth());
+            }
+        }
+
+        // Re-give compass to hunters
+        if ("huntergame".equals(currentGame) && state == GameState.RUNNING) {
+            if (hunterUUIDs.contains(uuid)) {
+                giveHunterCompass(player);
+            }
+        }
+    }
+
     // === Utils ===
 
     private void broadcast(MinecraftServer server, String message) {

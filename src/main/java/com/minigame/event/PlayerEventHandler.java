@@ -3,6 +3,7 @@ package com.minigame.event;
 import com.minigame.game.GameManager;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
+import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -25,6 +26,22 @@ public class PlayerEventHandler {
                 }
             }
             return true;
+        });
+
+        // Player disconnect handling
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            ServerPlayer player = handler.player;
+            if (player != null) {
+                GameManager.INSTANCE.onPlayerDisconnect(player);
+            }
+        });
+
+        // Player join handling (for reconnects)
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            ServerPlayer player = handler.player;
+            if (player != null) {
+                GameManager.INSTANCE.onPlayerJoin(player);
+            }
         });
     }
 
