@@ -19,3 +19,7 @@ Thumbs.db
 # Minecraft
 run/
 logs/
+
+# Build logs
+*.log
+compile*.txt
