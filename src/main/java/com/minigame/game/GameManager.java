@@ -447,13 +447,13 @@ public class GameManager {
     }
 
     private void checkBrotherlyWin(MinecraftServer server) {
-        // Track if any player has been to the_end and returned to overworld
+        // Check if any player has killed the dragon and returned to overworld
         for (UUID uuid : brotherlyPlayers) {
             ServerPlayer p = server.getPlayerList().getPlayer(uuid);
             if (p == null) continue;
 
             String dim = p.serverLevel().dimension().location().toString();
-            if ("minecraft:overworld".equals(dim) && brotherlyVisitedEnd.contains(uuid)) {
+            if ("minecraft:overworld".equals(dim) && brotherlyVisitedEnd.contains(uuid) && hasKilledDragon(p)) {
                 brotherlyGameWin(server);
                 return;
             } else if ("minecraft:the_end".equals(dim)) {
@@ -1054,15 +1054,28 @@ public class GameManager {
         }
     }
 
+
+    private boolean hasKilledDragon(ServerPlayer player) {
+        try {
+            var advancements = player.server.getAdvancements();
+            var resourceLoc = new net.minecraft.resources.ResourceLocation("minecraft", "end/kill_dragon");
+            var adv = advancements.getAdvancement(resourceLoc);
+            if (adv != null) {
+                return player.getAdvancements().getOrStartProgress(adv).isDone();
+            }
+        } catch (Exception e) {
+            // Fallback: if advancement check fails, return false
+        }
+        return false;
+    }
+
     private void checkPreyWinCondition(MinecraftServer server) {
         ServerPlayer prey = server.getPlayerList().getPlayer(preyUUID);
         if (prey == null) return;
 
         String dim = prey.serverLevel().dimension().location().toString();
-        // Prey wins if they are in overworld and have killed the dragon
-        // Simple check: if prey was in the_end and is now in overworld
-        if ("minecraft:overworld".equals(dim) && "minecraft:the_end".equals(preyDimension)) {
-            // Prey returned from the_end to overworld (likely killed dragon)
+        // Prey wins if they are in overworld, have killed the dragon, and came from the_end
+        if ("minecraft:overworld".equals(dim) && "minecraft:the_end".equals(preyDimension) && hasKilledDragon(prey)) {
             hunterGamePreyWins(server, prey);
         }
     }
