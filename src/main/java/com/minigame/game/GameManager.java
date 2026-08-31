@@ -32,7 +32,7 @@ public class GameManager {
         WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL,
         WAITING_JOIN, HUNTER_FREEZE,
         WAITING_BROTHERLY_INVITE, WAITING_BROTHERLY_ACCEPT,
-        WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL, WAITING_COLOR_JOIN,
+        WAITING_COLOR_LIVES, WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL, WAITING_COLOR_JOIN,
         COUNTDOWN, RUNNING, FINISHED
     }
 
@@ -79,7 +79,7 @@ public class GameManager {
     private int colorTimer = 0;
     private boolean reactionPhase = false;
     private final Map<UUID, Integer> colorPartyLives = new HashMap<>();
-    private int colorPartyMaxLives = 3;
+    private int colorPartyMaxLives = 0; // 0 = infinite lives
 
     private static final String OBJECTIVE_NAME = "minigame_data";
     private final Map<UUID, Integer> playerLives = new HashMap<>();
@@ -108,6 +108,7 @@ public class GameManager {
                 || state == GameState.WAITING_JOIN
                 || state == GameState.WAITING_BROTHERLY_INVITE
                 || state == GameState.WAITING_BROTHERLY_ACCEPT
+                || state == GameState.WAITING_COLOR_LIVES
                 || state == GameState.WAITING_COLOR_REACTION
                 || state == GameState.WAITING_COLOR_INTERVAL
                 || state == GameState.WAITING_COLOR_JOIN;
@@ -161,7 +162,7 @@ public class GameManager {
             case WAITING_SWAP_TIME, WAITING_INVITE -> initiatorUUID = inviterUUID;
             case WAITING_HUNTER_FREEZE, WAITING_COMPASS_INTERVAL -> initiatorUUID = preyUUID;
             case WAITING_BROTHERLY_INVITE -> initiatorUUID = brotherlyHostUUID;
-            case WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL -> initiatorUUID = colorPartyPlayers.isEmpty() ? null : colorPartyPlayers.iterator().next();
+            case WAITING_COLOR_LIVES, WAITING_COLOR_REACTION, WAITING_COLOR_INTERVAL -> initiatorUUID = colorPartyPlayers.isEmpty() ? null : colorPartyPlayers.iterator().next();
             default -> {}
         }
         if (initiatorUUID != null && !player.getUUID().equals(initiatorUUID)) {
@@ -180,6 +181,7 @@ public class GameManager {
             case WAITING_COMPASS_INTERVAL -> handleCompassIntervalInput(server, player, msg);
             case WAITING_BROTHERLY_INVITE -> handleBrotherlyInvite(server, player, rawMsg);
             case WAITING_BROTHERLY_ACCEPT -> handleBrotherlyAccept(server, player, msg);
+            case WAITING_COLOR_LIVES -> handleColorLivesInput(server, player, msg);
             case WAITING_COLOR_REACTION -> handleColorReactionInput(server, player, msg);
             case WAITING_COLOR_INTERVAL -> handleColorIntervalInput(server, player, msg);
             case WAITING_COLOR_JOIN -> handleColorJoin(server, player, msg);
@@ -212,7 +214,8 @@ public class GameManager {
                 colorPartyPlayers.clear();
                 colorPartyPlayers.add(player.getUUID());
                 colorPartyLives.clear();
-                state = GameState.WAITING_COLOR_REACTION;
+                state = GameState.WAITING_COLOR_LIVES;
+                broadcast(server, "§a确认开始！ §e请输入玩家生命数（0=无限，默认0）：");
                 broadcast(server, "§a确认开始！ §e请输入玩家反应时间（秒，默认5）：");
             }
         } else if (msg.equals("n")) {
@@ -1127,6 +1130,25 @@ public class GameManager {
         return colorList.get(new Random().nextInt(colorList.size()));
     }
 
+    private void handleColorLivesInput(MinecraftServer server, ServerPlayer player, String msg) {
+        try {
+            int lives = Integer.parseInt(msg);
+            if (lives < 0) {
+                broadcast(server, "§c生命数不能为负数，请重新输入");
+                return;
+            }
+            colorPartyMaxLives = lives;
+            state = GameState.WAITING_COLOR_REACTION;
+            if (lives == 0) {
+                broadcast(server, "§a生命数设置为：无限 §e请输入玩家反应时间（秒，默认5）：");
+            } else {
+                broadcast(server, "§a生命数设置为：" + lives + " §e请输入玩家反应时间（秒，默认5）：");
+            }
+        } catch (NumberFormatException e) {
+            broadcast(server, "§c请输入有效的数字");
+        }
+    }
+
     private void handleColorReactionInput(MinecraftServer server, ServerPlayer player, String msg) {
         try {
             int seconds = Integer.parseInt(msg);
@@ -1182,7 +1204,7 @@ public class GameManager {
                 p.teleportTo(server.overworld(), x, y, z, Collections.emptySet(), p.getYRot(), p.getXRot());
                 p.setHealth(p.getMaxHealth());
                 p.getFoodData().setFoodLevel(20);
-                colorPartyLives.put(uuid, colorPartyMaxLives);
+                if (colorPartyMaxLives > 0) colorPartyLives.put(uuid, colorPartyMaxLives);
             }
         }
 
@@ -1222,13 +1244,13 @@ public class GameManager {
                     ServerPlayer p = server.getPlayerList().getPlayer(uuid);
                     if (p == null) continue;
                     int lives = colorPartyLives.getOrDefault(uuid, 0);
-                    if (lives <= 0) continue;
+                    if (lives <= 0 && colorPartyMaxLives > 0) continue;
 
                     String blockColor = getPlayerBlockColor(p);
                     if (!blockColor.equals(currentTargetColor)) {
-                        lives--;
-                        colorPartyLives.put(uuid, lives);
-                        if (lives <= 0) {
+                        if (colorPartyMaxLives > 0) lives--;
+                        if (colorPartyMaxLives > 0) colorPartyLives.put(uuid, lives);
+                        if (lives <= 0 && colorPartyMaxLives > 0) {
                             broadcast(server, "§c[色盲派对] " + p.getName().getString() + " 命数耗尽，被淘汰！");
                         } else {
                             broadcast(server, "§c[色盲派对] " + p.getName().getString() + " 站错颜色！剩余" + lives + "条命");
@@ -1276,20 +1298,22 @@ public class GameManager {
         tickCounter++;
 
         if ("deathrace".equals(currentGame)) {
-            int regenTicks = regenIntervalSeconds * 20;
-            if (tickCounter % regenTicks == 0) {
-                for (Map.Entry<UUID, Integer> entry : playerLives.entrySet()) {
-                    ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
-                    if (player != null) {
-                        int lives = entry.getValue();
-                        if (lives < maxLives) {
-                            entry.setValue(lives + 1);
-                            player.sendSystemMessage(Component.literal("§a[死亡竞速] 恢复了1条命，当前" + (lives + 1) + "条命"));
+            if (regenIntervalSeconds > 0) {
+                int regenTicks = regenIntervalSeconds * 20;
+                if (tickCounter % regenTicks == 0) {
+                    for (Map.Entry<UUID, Integer> entry : playerLives.entrySet()) {
+                        ServerPlayer player = server.getPlayerList().getPlayer(entry.getKey());
+                        if (player != null) {
+                            int lives = entry.getValue();
+                            if (lives < maxLives) {
+                                entry.setValue(lives + 1);
+                                player.sendSystemMessage(Component.literal("§a[死亡竞速] 恢复了1条命，当前" + (lives + 1) + "条命"));
+                            }
                         }
                     }
-                }
-                updateScoreboard(server);
+                    updateScoreboard(server);
             }
+        }
         } else if ("brotherhood".equals(currentGame)) {
             int swapTicks = swapIntervalSeconds * 20;
             if (tickCounter % swapTicks == 0) {
