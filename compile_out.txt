@@ -1,0 +1,42 @@
+﻿To honour the JVM settings for this build a single-use Daemon process will be forked. See https://docs.gradle.org/8.1.1/userguide/gradle_daemon.html#sec:disabling_the_daemon.
+Daemon will be stopped at the end of the build 
+
+> Configure project :
+Fabric Loom: 1.3.10
+
+> Task :compileJava FAILED
+gradlew.bat : C:\Users\linran\Doubao\chats\2026-08-30\new-chat\minigame-fabric-1.20.1\src\main\java\com\minigame\game\G
+ameManager.java:207: ����: �Ҳ�������
+所在位置 行:5 字符: 1
++ & .\gradlew.bat compileJava --no-daemon 2>&1 | Out-File -FilePath "$b ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (C:\Users\linran...����: �Ҳ�������:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+                scoreboard.getOrCreatePlayerScore(player.getScoreboardName(), objective).set(entry.getValue());
+                                                                                        ^
+  ����:   ���� set(Integer)
+  λ��: �� Score
+C:\Users\linran\Doubao\chats\2026-08-30\new-chat\minigame-fabric-1.20.1\src\main\java\com\minigame\game\GameManager.jav
+a:222: ����: �Ҳ�������
+                scoreboard.getOrCreatePlayerScore(player.getScoreboardName(), objective).set(entry.getValue());
+                                                                                        ^
+  ����:   ���� set(Integer)
+  λ��: �� Score
+2 ������
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':compileJava'.
+> Compilation failed; see the compiler error output for details.
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+
+* Get more help at https://help.gradle.org
+
+BUILD FAILED in 10s
+1 actionable task: 1 executed
