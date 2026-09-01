@@ -96,6 +96,35 @@ public class GameManager {
         return state != GameState.IDLE;
     }
 
+    // === 供游戏类调用的公共方法 ===
+
+    public int getTickCounter() {
+        return tickCounter;
+    }
+
+    public void setWinner(UUID winnerUUID) {
+        this.winner = winnerUUID;
+    }
+
+    public UUID getWinner() {
+        return winner;
+    }
+
+    public void finishGame(MinecraftServer server) {
+        state = GameState.FINISHED;
+        fireworkTimer = 0;
+        ServerPlayer winnerPlayer = winner != null ? server.getPlayerList().getPlayer(winner) : null;
+        if (winnerPlayer != null) {
+            startWinnerCelebration(server, winnerPlayer);
+        } else {
+            broadcast(server, "§6§l游戏结束！");
+        }
+    }
+
+    public void cancelGame() {
+        reset();
+    }
+
     public boolean isInSetupFlow() {
         return state == GameState.WAITING_CONFIRM
                 || state == GameState.WAITING_LIVES
