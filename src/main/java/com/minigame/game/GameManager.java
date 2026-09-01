@@ -1263,7 +1263,6 @@ public class GameManager {
             for (UUID uuid : colorPartyPlayers) {
                 ServerPlayer p = server.getPlayerList().getPlayer(uuid);
                 if (p != null) {
-                    int secondsLeft = (colorTimer / 20) + 1;
                     String displayText = "§6目标：§e§l" + currentTargetColor + " §7| §a剩余：§e" + secondsLeft + "秒";
                     p.displayClientMessage(Component.literal(displayText), true);
                 }
