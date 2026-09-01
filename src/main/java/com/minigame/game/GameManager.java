@@ -1262,9 +1262,10 @@ public class GameManager {
 
             for (UUID uuid : colorPartyPlayers) {
                 ServerPlayer p = server.getPlayerList().getPlayer(uuid);
-                if (p != null && colorPartyLives.getOrDefault(uuid, 0) > 0) {
-                    String blockColor = getPlayerBlockColor(p);
-                    p.displayClientMessage(Component.literal("§e脚下方块：§f" + blockColor + " §7| §6目标：§e" + currentTargetColor), true);
+                if (p != null) {
+                    int secondsLeft = (colorTimer / 20) + 1;
+                    String displayText = "§6目标：§e§l" + currentTargetColor + " §7| §a剩余：§e" + secondsLeft + "秒";
+                    p.displayClientMessage(Component.literal(displayText), true);
                 }
             }
 
