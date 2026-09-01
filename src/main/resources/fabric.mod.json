@@ -11,6 +11,7 @@
   "environment": "*",
   "entrypoints": {
     "main": ["com.minigame.MinigameMod"]
+    ,"fabric-gametest": ["com.minigame.test.MinigameGameTests"]
   },
   "depends": {
     "fabricloader": ">=0.14.21",
